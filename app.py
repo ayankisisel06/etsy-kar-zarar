@@ -6,23 +6,45 @@ from supabase import create_client, Client
 # Sayfa Yapılandırması
 st.set_page_config(page_title="Etsy Kar-Zarar Paneli", page_icon="🪶", layout="wide")
 
-# --- CANLI KUR ÇEKME FONKSİYONU ---
+# --- GELİŞMİŞ & YEDEKLİ CANLI KUR ÇEKME FONKSİYONU ---
 def get_live_usd_rate():
+    # 1. Öncelikli Servis (ExchangeRate-API)
     try:
         url = "https://api.exchangerate-api.com/v4/latest/USD"
-        response = requests.get(url, timeout=5)
-        data = response.json()
-        return round(float(data["rates"]["TRY"]), 2)
+        res = requests.get(url, timeout=4)
+        if res.status_code == 200:
+            rate = round(float(res.json()["rates"]["TRY"]), 2)
+            if rate > 0:
+                return rate
     except Exception:
-        try:
-            url_alt = "https://open.er-api.com/v6/latest/USD"
-            response_alt = requests.get(url_alt, timeout=5)
-            data_alt = response_alt.json()
-            return round(float(data_alt["rates"]["TRY"]), 2)
-        except Exception:
-            return 47.54
+        pass
 
-# --- SESSION STATE ---
+    # 2. Yedek Servis (Open ER API)
+    try:
+        url_alt = "https://open.er-api.com/v6/latest/USD"
+        res_alt = requests.get(url_alt, timeout=4)
+        if res_alt.status_code == 200:
+            rate_alt = round(float(res_alt.json()["rates"]["TRY"]), 2)
+            if rate_alt > 0:
+                return rate_alt
+    except Exception:
+        pass
+
+    # 3. Son Yedek Servis (Frankfurter API)
+    try:
+        url_third = "https://api.frankfurter.app/latest?from=USD&to=TRY"
+        res_third = requests.get(url_third, timeout=4)
+        if res_third.status_code == 200:
+            rate_third = round(float(res_third.json()["rates"]["TRY"]), 2)
+            if rate_third > 0:
+                return rate_third
+    except Exception:
+        pass
+
+    # Eğer tüm servisler kesilirse en son güncel varsayılan kur
+    return 47.54
+
+# --- SESSION STATE BAŞLATMA ---
 if "usd_rate" not in st.session_state:
     st.session_state["usd_rate"] = get_live_usd_rate()
 
@@ -47,20 +69,25 @@ st.title("🪶 Etsy Kar-Zarar Paneli")
 tab1, tab2 = st.tabs(["🧮 Kar-Zarar Hesapla", "📊 Veritabanı Kayıtları"])
 
 # ==========================================
-# SEKME 1: HESAPLAYICI (MOBİL UYUMLU / KOMPAKT)
+# SEKME 1: HESAPLAYICI (KOMPAKT & DÜZELTİLMİŞ KUR)
 # ==========================================
 with tab1:
     # SATIR 1: Kur ve Canlı Çek
     c_kur1, c_kur2 = st.columns([2, 1])
-    with c_kur1:
-        kur = st.number_input("1. Döviz Kuru (TL)", min_value=0.0, value=st.session_state["usd_rate"], step=0.1, key="usd_input")
+    
     with c_kur2:
         st.write("")
         st.write("")
-        if st.button("🔄 Canlı", use_container_width=True):
-            st.session_state["usd_rate"] = get_live_usd_rate()
-            st.toast(f"Güncel Kur: {st.session_state['usd_rate']} TL", icon="💱")
+        if st.button("🔄 Canlı Kur", use_container_width=True):
+            fresh_rate = get_live_usd_rate()
+            st.session_state["usd_rate"] = fresh_rate
+            st.toast(f"Güncel Dolar Kuru Çekildi: {fresh_rate} TL", icon="💱")
             st.rerun()
+
+    with c_kur1:
+        kur = st.number_input("1. Dövis Kuru (TL)", min_value=0.0, value=float(st.session_state["usd_rate"]), step=0.1, key="usd_input_field")
+        # Eğer kullanıcı elle girerse session_state'i güncelle
+        st.session_state["usd_rate"] = kur
 
     # SATIR 2: Ürün Maliyeti & Kargo Maliyeti (Yan Yana)
     c_m1, c_m2 = st.columns(2)
@@ -69,7 +96,7 @@ with tab1:
     with c_m2:
         kargo_usd = st.number_input("3. Kargo Maliyeti ($)", min_value=0.0, value=5.00, step=0.5)
 
-    # İSTEĞE BAĞLI: Fiyat Ekleme / Silme (Açılır Gizli Menü)
+    # İSTEĞE BAĞLI: Fiyat Ekleme / Silme
     with st.expander("⚙️ Fiyat Seçeneklerini Yönet (+ / -)"):
         col_add, col_del = st.columns(2)
         with col_add:
@@ -111,7 +138,7 @@ with tab1:
 
     # KOMPAKT HESAPLAMA ÖZETİ
     with st.container(border=True):
-        st.caption(f"Ürün: ${selected_cost:.2f} | Kargo: ${kargo_usd:.2f} | Arka Baskı: ${arka_baski_usd:.2f} (Kur: {kur:.2f})")
+        st.caption(f"Ürün: ${selected_cost:.2f} | Kargo: ${kargo_usd:.2f} | Arka Baskı: ${arka_baski_usd:.2f} (Kur: {kur:.2f} TL)")
         
         res_c1, res_c2 = st.columns(2)
         res_c1.markdown(f"**Toplam Gider:**  \n**{toplam_gider_tl:.2f} TL**")
@@ -183,7 +210,6 @@ with tab2:
                 
                 st.markdown("---")
 
-                # Mobil İçin Kart Tipi Satırlar (Daha Rahat Okuma ve Silme)
                 for r in filtered_rows:
                     with st.container(border=True):
                         c1, c2 = st.columns([3, 1])
