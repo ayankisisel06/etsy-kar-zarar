@@ -8,7 +8,6 @@ st.set_page_config(page_title="Etsy Kar-Zarar Paneli", page_icon="🪶", layout=
 
 # --- CANLI KUR ÇEKME FONKSİYONU ---
 def get_live_usd_rate():
-    # 1. Servis
     try:
         url = "https://api.exchangerate-api.com/v4/latest/USD"
         res = requests.get(url, timeout=4)
@@ -19,7 +18,6 @@ def get_live_usd_rate():
     except Exception:
         pass
 
-    # 2. Servis (Yedek)
     try:
         url_alt = "https://open.er-api.com/v6/latest/USD"
         res_alt = requests.get(url_alt, timeout=4)
@@ -27,17 +25,6 @@ def get_live_usd_rate():
             rate_alt = round(float(res_alt.json()["rates"]["TRY"]), 2)
             if rate_alt > 0:
                 return rate_alt
-    except Exception:
-        pass
-
-    # 3. Servis (Son Yedek)
-    try:
-        url_third = "https://api.frankfurter.app/latest?from=USD&to=TRY"
-        res_third = requests.get(url_third, timeout=4)
-        if res_third.status_code == 200:
-            rate_third = round(float(res_third.json()["rates"]["TRY"]), 2)
-            if rate_third > 0:
-                return rate_third
     except Exception:
         pass
 
@@ -52,6 +39,10 @@ if "cost_list" not in st.session_state:
 
 if "rate_msg" not in st.session_state:
     st.session_state["rate_msg"] = None
+
+# Kutucuğu zorla yenilemek için dinamik versiyon sayacı
+if "rate_version" not in st.session_state:
+    st.session_state["rate_version"] = 0
 
 # Supabase Bağlantısı
 @st.cache_resource
@@ -87,22 +78,20 @@ with tab1:
         if st.button("🔄 Canlı Kur", use_container_width=True):
             fresh_rate = get_live_usd_rate()
             st.session_state["usd_rate"] = fresh_rate
+            st.session_state["rate_version"] += 1  # Key versiyonunu artırarak kutuyu sıfırlamaya zorluyoruz
             
-            # Kutucuğun içindeki eski değeri silip yeni canlı kuru yazdırıyoruz
-            if "usd_input_field" in st.session_state:
-                del st.session_state["usd_input_field"]
-                
             current_time = datetime.now().strftime("%H:%M:%S")
             st.session_state["rate_msg"] = f"✅ Güncel Kur Çekildi ve Kutucuğa Yazıldı: {fresh_rate} TL (Saat: {current_time})"
             st.rerun()
 
     with c_kur1:
+        # Dinamik key sayesinde her kur çekildiğinde kutucuk tamamen yeni değerle çizilir
         kur = st.number_input(
             "1. Dolar / TL Kuru", 
             min_value=0.0, 
             value=float(st.session_state["usd_rate"]), 
             step=0.1, 
-            key="usd_input_field"
+            key=f"usd_input_{st.session_state['rate_version']}"
         )
         st.session_state["usd_rate"] = kur
 
