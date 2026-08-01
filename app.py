@@ -6,7 +6,7 @@ from supabase import create_client, Client
 # Sayfa Yapılandırması
 st.set_page_config(page_title="Etsy Kar-Zarar Paneli", page_icon="🪶", layout="wide")
 
-# --- GELİŞMİŞ & YEDEKLİ CANLI KUR ÇEKME FONKSİYONU ---
+# --- CANLI KUR ÇEKME FONKSİYONU ---
 def get_live_usd_rate():
     # 1. Servis
     try:
@@ -74,7 +74,7 @@ tab1, tab2 = st.tabs(["🧮 Kar-Zarar Hesapla", "📊 Veritabanı Kayıtları"])
 # SEKME 1: HESAPLAYICI
 # ==========================================
 with tab1:
-    # Ekranda Kalıcı Bildirim Kutusu (Varsa Göster)
+    # Kalıcı Bilgi Mesajı
     if st.session_state["rate_msg"]:
         st.success(st.session_state["rate_msg"])
 
@@ -87,25 +87,24 @@ with tab1:
         if st.button("🔄 Canlı Kur", use_container_width=True):
             fresh_rate = get_live_usd_rate()
             st.session_state["usd_rate"] = fresh_rate
-            st.session_state["usd_input_key"] = float(fresh_rate) # Input değerini zorla güncelle
+            
+            # Kutucuğun içindeki eski değeri silip yeni canlı kuru yazdırıyoruz
+            if "usd_input_field" in st.session_state:
+                del st.session_state["usd_input_field"]
+                
             current_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state["rate_msg"] = f"✅ Canlı Dolar Kuru Başarıyla Çekildi: {fresh_rate} TL (Saat: {current_time})"
+            st.session_state["rate_msg"] = f"✅ Güncel Kur Çekildi ve Kutucuğa Yazıldı: {fresh_rate} TL (Saat: {current_time})"
             st.rerun()
-
-    # Input Key Kontrolü
-    if "usd_input_key" not in st.session_state:
-        st.session_state["usd_input_key"] = float(st.session_state["usd_rate"])
 
     with c_kur1:
         kur = st.number_input(
             "1. Dolar / TL Kuru", 
             min_value=0.0, 
-            value=st.session_state["usd_input_key"], 
+            value=float(st.session_state["usd_rate"]), 
             step=0.1, 
             key="usd_input_field"
         )
         st.session_state["usd_rate"] = kur
-        st.session_state["usd_input_key"] = kur
 
     # SATIR 2: Ürün Maliyeti & Kargo Maliyeti
     c_m1, c_m2 = st.columns(2)
@@ -178,7 +177,7 @@ with tab1:
             res = supabase.table("satislar").insert(data).execute()
             if res.data:
                 st.toast("Satış başarıyla eklendi!", icon="✅")
-                st.session_state["rate_msg"] = None # Mesajı temizle
+                st.session_state["rate_msg"] = None
                 st.rerun()
         except Exception as e:
             st.error(f"Veritabanına kaydetme hatası: {e}")
