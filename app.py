@@ -1,148 +1,126 @@
-import datetime
-import pandas as pd
-import requests
 import streamlit as st
+import requests
 from supabase import create_client, Client
 
-# Sayfa Yapılandırması (Mobil Odaklı)
-st.set_page_config(
-    page_title="Etsy Kar-Zarar (PostgreSQL)",
-    page_icon="🛍️",
-    layout="centered"
-)
+# Page configuration
+st.set_page_config(page_title="Etsy Kar-Zarar Hesaplayıcı", page_icon="🛍️", layout="centered")
 
-# ---------------------------------------------------------
-# VERİTABANI BAĞLANTISI (Supabase)
-# ---------------------------------------------------------
-# Gizli API Anahtarlarını Streamlit Secrets üzerinden veya doğrudan okur
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "BURAYA_SUPABASE_URL_GELECEK")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "BURAYA_SUPABASE_ANON_KEY_GELECEK")
+# --- CANLI KUR ÇEKME FONKSİYONU ---
+def get_live_usd_rate():
+    try:
+        # TCMB verilerini de kullanan açık döviz servisi
+        url = "https://api.exchangerate-api.com/v4/latest/USD"
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        return round(float(data["rates"]["TRY"]), 2)
+    except Exception:
+        # Alternatif servis (Yedek)
+        try:
+            url_alt = "https://open.er-api.com/v6/latest/USD"
+            response_alt = requests.get(url_alt, timeout=5)
+            data_alt = response_alt.json()
+            return round(float(data_alt["rates"]["TRY"]), 2)
+        except Exception:
+            return 32.50 # Bağlantı koparsa varsayılan yedek kur
 
+# Session state başlatma (Canlı kur için)
+if "usd_rate" not in st.session_state:
+    st.session_state["usd_rate"] = get_live_usd_rate()
+
+# Supabase connection
 @st.cache_resource
 def init_supabase() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-supabase = init_supabase()
+try:
+    supabase = init_supabase()
+except Exception as e:
+    st.error(f"Supabase bağlantı hatası: {e}")
 
-# Canlı Kur Çekme Fonksiyonu
-def canli_kur_cek():
+st.title("🛍️ Etsy Kar-Zarar Hesaplayıcı")
+
+# --- INPUT SECTION ---
+st.subheader("1. Dolar Kuru")
+
+# Kur ve Canlı Çek Butonu Yan Yana
+col_kur1, col_kur2 = st.columns([3, 1])
+
+with col_kur2:
+    st.write("") # Hizalama boşluğu
+    st.write("") 
+    if st.button("🔄 Canlı Kur", use_container_width=True):
+        st.session_state["usd_rate"] = get_live_usd_rate()
+        st.toast(f"Güncel Kur: {st.session_state['usd_rate']} TL", icon="💱")
+
+with col_kur1:
+    kur = st.number_input("Güncel Dolar Kuru (TL)", min_value=0.0, value=st.session_state["usd_rate"], step=0.1, key="usd_input")
+
+st.subheader("2. Ürün Maliyeti ($)")
+cost_usd = st.number_input("Ürün Maliyeti (USD)", min_value=0.0, value=14.72, step=0.5)
+
+gider_tl = cost_usd * kur
+
+st.subheader("3. Satış Kazancı ( TL )")
+kazanc_tl = st.number_input("Elinize Geçen Tutar (TL)", min_value=0.0, value=1000.0, step=10.0)
+
+net_kar_tl = kazanc_tl - gider_tl
+
+st.markdown("---")
+st.subheader("📊 Sonuç Özeti")
+st.caption(f"Maliyet: ${cost_usd:.2f} x {kur:.2f} TL = {gider_tl:.2f} TL")
+
+if net_kar_tl >= 0:
+    st.success(f"### NET KAR: +{net_kar_tl:.2f} TL")
+else:
+    st.error(f"### NET ZARAR: {net_kar_tl:.2f} TL")
+
+# --- DATABASE INSERT ---
+if st.button("💾 PostgreSQL Veritabanına Yaz", use_container_width=True):
+    data = {
+        "kur": float(kur),
+        "gider_tl": float(gider_tl),
+        "kazanc_tl": float(kazanc_tl),
+        "net_kar_tl": float(net_kar_tl)
+    }
     try:
-        url = "https://open.er-api.com/v6/latest/USD"
-        res = requests.get(url, timeout=3).json()
-        return round(res["rates"]["TRY"], 2)
-    except Exception:
-        return 35.00
-
-# ---------------------------------------------------------
-# ARAYÜZ
-# ---------------------------------------------------------
-st.title("🛍️ Etsy Kar - Zarar Paneli")
-
-tab1, tab2 = st.tabs(["🧮 Hesapla & Ekle", "📜 Veritabanı Kayıtları"])
-
-# ==================== 1. SEKME: HESAPLAMA ====================
-with tab1:
-    st.subheader("1. Döviz Kuru")
-    col_kur1, col_kur2 = st.columns([2, 1])
-    
-    with col_kur2:
-        if st.button("🔄 Canlı Çek", use_container_width=True):
-            st.session_state.kur = canli_kur_cek()
-            
-    if "kur" not in st.session_state:
-        st.session_state.kur = canli_kur_cek()
-        
-    with col_kur1:
-        kur = st.number_input("USD / TRY Kuru", value=float(st.session_state.kur), step=0.1, format="%.2f")
-
-    st.divider()
-
-    st.subheader("2. Ürün & Kargo Maliyeti")
-    
-    if "fiyatlar" not in st.session_state:
-        st.session_state.fiyatlar = [9.72, 11.88, 14.50, 19.99]
-        
-    fiyat_secim = st.selectbox("Ürün Fiyatı ($)", options=st.session_state.fiyatlar)
-    
-    with st.expander("➕ / ➖ Fiyat Seçeneklerini Düzenle"):
-        yeni_fiyat = st.number_input("Yeni Fiyat ($)", value=0.0, step=0.5)
-        if st.button("Listeye Ekle"):
-            if yeni_fiyat > 0 and yeni_fiyat not in st.session_state.fiyatlar:
-                st.session_state.fiyatlar.append(yeni_fiyat)
-                st.session_state.fiyatlar.sort()
-                st.rerun()
-
-    kargo_usd = st.number_input("Kargo Ücreti ($)", value=5.0, step=0.5)
-    arka_baski = st.checkbox("Arka kısımda baskı var (+$2.00)")
-
-    st.divider()
-
-    st.subheader("3. Satış Kazancı (TL)")
-    kazanc_tl = st.number_input("Elinize Geçen Tutar (TL)", value=1000.0, step=50.0)
-
-    # Hesaplama Mantığı
-    baski_usd = 2.0 if arka_baski else 0.0
-    toplam_gider_usd = fiyat_secim + kargo_usd + baski_usd
-    toplam_gider_tl = toplam_gider_usd * kur
-    net_kar_tl = kazanc_tl - toplam_gider_tl
-
-    st.divider()
-    st.markdown("### 📊 Sonuç Özeti")
-    st.caption(f"Maliyet: ${toplam_gider_usd:.2f} x {kur:.2f} TL = {toplam_gider_tl:.2f} TL")
-    
-    if net_kar_tl >= 0:
-        st.success(f"### NET KAR: +{net_kar_tl:.2f} TL")
-    else:
-        st.error(f"### NET ZARAR: {net_kar_tl:.2f} TL")
-
-    # Supabase PostgreSQL INSERT İşlemi
-    if st.button("📥 PostgreSQL Veritabanına Yaz", type="primary", use_container_width=True):
-        data = {
-            "kur": float(kur),
-            "gider_tl": float(toplam_gider_tl),
-            "kazanc_tl": float(kazanc_tl),
-            "net_kar_tl": float(net_kar_tl)
-        }
         res = supabase.table("satislar").insert(data).execute()
         if res.data:
-            st.toast("Satış PostgreSQL veritabanına başarıyla eklendi!", icon="✅")
+            st.toast("Satış başarıyla eklendi!", icon="✅")
+            st.rerun()
+    except Exception as e:
+        st.error(f"Veritabanına kaydetme hatası: {e}")
 
-# ==================== 2. SEKME: DB OKUMA & SİLME ====================
-with tab2:
-    st.subheader("🔍 Veritabanı Kayıtları")
-    
-    # Supabase SELECT Sorgusu
+st.markdown("---")
+
+# --- DATABASE READ & DELETE SECTION ---
+st.subheader("🔍 Veritabanı Kayıtları")
+
+try:
     res = supabase.table("satislar").select("*").order("created_at", desc=True).execute()
     rows = res.data
 
     if rows:
-        df = pd.DataFrame(rows)
-        # Tarih Formatlama
-        df["created_at"] = pd.to_datetime(df["created_at"]).dt.strftime('%Y-%m-%d %H:%M')
-        
-        # Tablo Sütun İsimleri
-        df = df[["id", "created_at", "kur", "gider_tl", "kazanc_tl", "net_kar_tl"]]
-        df.rename(columns={
-            "id": "ID",
-            "created_at": "Tarih/Saat",
-            "kur": "Kur",
-            "gider_tl": "Gider (TL)",
-            "kazanc_tl": "Kazanç (TL)",
-            "net_kar_tl": "Net Kar (TL)"
-        }, inplace=True)
-
-        st.dataframe(df, use_container_width=True)
-
-        st.divider()
-        st.caption("🗑️ Veritabanından Satır Sil (ID ile)")
-        col_sil1, col_sil2 = st.columns([2, 1])
-        with col_sil1:
-            silinecek_id = st.number_input("Silinecek Kayıt ID'si", min_value=1, step=1)
-        with col_sil2:
-            st.write("") # Boşluk hizalama
-            if st.button("Kaydı Sil", use_container_width=True):
-                supabase.table("satislar").delete().eq("id", silinecek_id).execute()
-                st.toast(f"ID #{silinecek_id} veritabanından silindi.", icon="🗑️")
-                st.rerun()
+        for row in rows:
+            with st.container(border=True):
+                col1, col2 = st.columns([4, 1])
+                
+                with col1:
+                    tarih = row.get("created_at", "")[:16].replace("T", " ")
+                    kar = row.get("net_kar_tl", 0)
+                    kar_metin = f":green[+{kar:.2f} TL]" if kar >= 0 else f":red[{kar:.2f} TL]"
+                    
+                    st.markdown(f"**Tarih:** {tarih} | **Net Kar:** {kar_metin}")
+                    st.caption(f"Kazanç: {row.get('kazanc_tl', 0):.2f} TL | Gider: {row.get('gider_tl', 0):.2f} TL | Kur: {row.get('kur', 0):.2f} TL")
+                
+                with col2:
+                    if st.button("🗑️ Sil", key=f"del_{row['id']}", type="secondary"):
+                        supabase.table("satislar").delete().eq("id", row["id"]).execute()
+                        st.toast("Kayıt silindi!", icon="🗑️")
+                        st.rerun()
     else:
-        st.info("Veritabanında henüz satış kaydı bulunmuyor.")
+        st.info("Henüz veritabanında kayıtlı bir satış bulunmuyor.")
+
+except Exception as e:
+    st.error(f"Kayıtlar çekilirken hata oluştu: {e}")
