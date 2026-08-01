@@ -8,7 +8,7 @@ st.set_page_config(page_title="Etsy Kar-Zarar Paneli", page_icon="🪶", layout=
 
 # --- GELİŞMİŞ & YEDEKLİ CANLI KUR ÇEKME FONKSİYONU ---
 def get_live_usd_rate():
-    # 1. Öncelikli Servis (ExchangeRate-API)
+    # 1. Servis
     try:
         url = "https://api.exchangerate-api.com/v4/latest/USD"
         res = requests.get(url, timeout=4)
@@ -19,7 +19,7 @@ def get_live_usd_rate():
     except Exception:
         pass
 
-    # 2. Yedek Servis (Open ER API)
+    # 2. Servis (Yedek)
     try:
         url_alt = "https://open.er-api.com/v6/latest/USD"
         res_alt = requests.get(url_alt, timeout=4)
@@ -30,7 +30,7 @@ def get_live_usd_rate():
     except Exception:
         pass
 
-    # 3. Son Yedek Servis (Frankfurter API)
+    # 3. Servis (Son Yedek)
     try:
         url_third = "https://api.frankfurter.app/latest?from=USD&to=TRY"
         res_third = requests.get(url_third, timeout=4)
@@ -41,7 +41,6 @@ def get_live_usd_rate():
     except Exception:
         pass
 
-    # Eğer tüm servisler kesilirse en son güncel varsayılan kur
     return 47.54
 
 # --- SESSION STATE BAŞLATMA ---
@@ -50,6 +49,9 @@ if "usd_rate" not in st.session_state:
 
 if "cost_list" not in st.session_state:
     st.session_state["cost_list"] = [9.72, 11.88, 14.72, 16.50]
+
+if "rate_msg" not in st.session_state:
+    st.session_state["rate_msg"] = None
 
 # Supabase Bağlantısı
 @st.cache_resource
@@ -69,9 +71,13 @@ st.title("🪶 Etsy Kar-Zarar Paneli")
 tab1, tab2 = st.tabs(["🧮 Kar-Zarar Hesapla", "📊 Veritabanı Kayıtları"])
 
 # ==========================================
-# SEKME 1: HESAPLAYICI (KOMPAKT & DÜZELTİLMİŞ KUR)
+# SEKME 1: HESAPLAYICI
 # ==========================================
 with tab1:
+    # Ekranda Kalıcı Bildirim Kutusu (Varsa Göster)
+    if st.session_state["rate_msg"]:
+        st.success(st.session_state["rate_msg"])
+
     # SATIR 1: Kur ve Canlı Çek
     c_kur1, c_kur2 = st.columns([2, 1])
     
@@ -81,22 +87,34 @@ with tab1:
         if st.button("🔄 Canlı Kur", use_container_width=True):
             fresh_rate = get_live_usd_rate()
             st.session_state["usd_rate"] = fresh_rate
-            st.toast(f"Güncel Dolar Kuru Çekildi: {fresh_rate} TL", icon="💱")
+            st.session_state["usd_input_key"] = float(fresh_rate) # Input değerini zorla güncelle
+            current_time = datetime.now().strftime("%H:%M:%S")
+            st.session_state["rate_msg"] = f"✅ Canlı Dolar Kuru Başarıyla Çekildi: {fresh_rate} TL (Saat: {current_time})"
             st.rerun()
 
-    with c_kur1:
-        kur = st.number_input("1. Dövis Kuru (TL)", min_value=0.0, value=float(st.session_state["usd_rate"]), step=0.1, key="usd_input_field")
-        # Eğer kullanıcı elle girerse session_state'i güncelle
-        st.session_state["usd_rate"] = kur
+    # Input Key Kontrolü
+    if "usd_input_key" not in st.session_state:
+        st.session_state["usd_input_key"] = float(st.session_state["usd_rate"])
 
-    # SATIR 2: Ürün Maliyeti & Kargo Maliyeti (Yan Yana)
+    with c_kur1:
+        kur = st.number_input(
+            "1. Dolar / TL Kuru", 
+            min_value=0.0, 
+            value=st.session_state["usd_input_key"], 
+            step=0.1, 
+            key="usd_input_field"
+        )
+        st.session_state["usd_rate"] = kur
+        st.session_state["usd_input_key"] = kur
+
+    # SATIR 2: Ürün Maliyeti & Kargo Maliyeti
     c_m1, c_m2 = st.columns(2)
     with c_m1:
         selected_cost = st.selectbox("2. Ürün Maliyeti ($)", options=st.session_state["cost_list"], index=0)
     with c_m2:
         kargo_usd = st.number_input("3. Kargo Maliyeti ($)", min_value=0.0, value=5.00, step=0.5)
 
-    # İSTEĞE BAĞLI: Fiyat Ekleme / Silme
+    # Fiyat Seçeneklerini Yönet
     with st.expander("⚙️ Fiyat Seçeneklerini Yönet (+ / -)"):
         col_add, col_del = st.columns(2)
         with col_add:
@@ -116,7 +134,7 @@ with tab1:
                     st.toast("Fiyat silindi!", icon="🗑️")
                     st.rerun()
 
-    # SATIR 3: Satış Kazancı & Arka Baskı (Yan Yana)
+    # SATIR 3: Satış Kazancı & Arka Baskı
     c_k1, c_k2 = st.columns([2, 1])
     with c_k1:
         kazanc_tl = st.number_input("4. Satış Kazancı (TL)", min_value=0.0, value=1000.00, step=10.0)
@@ -160,6 +178,7 @@ with tab1:
             res = supabase.table("satislar").insert(data).execute()
             if res.data:
                 st.toast("Satış başarıyla eklendi!", icon="✅")
+                st.session_state["rate_msg"] = None # Mesajı temizle
                 st.rerun()
         except Exception as e:
             st.error(f"Veritabanına kaydetme hatası: {e}")
