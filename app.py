@@ -3,8 +3,8 @@ import requests
 from datetime import datetime
 from supabase import create_client, Client
 
-# Sayfa Genişlik ve Başlık Ayarı
-st.set_page_config(page_title="Etsy Kar-Zarar Paneli", page_icon="🛍️", layout="wide")
+# Sayfa Yapılandırması
+st.set_page_config(page_title="Etsy Kar-Zarar & Maliyet Yönetim Paneli", page_icon="🪶", layout="wide")
 
 # --- CANLI KUR ÇEKME FONKSİYONU ---
 def get_live_usd_rate():
@@ -20,11 +20,15 @@ def get_live_usd_rate():
             data_alt = response_alt.json()
             return round(float(data_alt["rates"]["TRY"]), 2)
         except Exception:
-            return 32.50
+            return 47.54
 
-# Session State Başlatma (Canlı Kur İçin)
+# --- SESSION STATE (SAYFA HAFIZASI) ---
 if "usd_rate" not in st.session_state:
     st.session_state["usd_rate"] = get_live_usd_rate()
+
+if "cost_list" not in st.session_state:
+    # Varsayılan kaydedilmiş fiyat seçenekleri
+    st.session_state["cost_list"] = [9.72, 11.88, 14.72, 16.50]
 
 # Supabase Bağlantısı
 @st.cache_resource
@@ -38,55 +42,107 @@ try:
 except Exception as e:
     st.error(f"Supabase bağlantı hatası: {e}")
 
-st.title("🛍️ Etsy Finansal Yönetim Paneli")
+st.title("🪶 Etsy Kar-Zarar & Maliyet Yönetim Paneli")
 
-# ==========================================
-# İKİ AYRI SEKME OLUŞTURULUYOR
-# ==========================================
+# --- İKİ AYRI SEKME ---
 tab1, tab2 = st.tabs(["🧮 Kar-Zarar Hesapla", "📊 Veritabanı Kayıtları"])
 
-# ------------------------------------------
-# SEKME 1: HESAPLAYICI VE KAYIT
-# ------------------------------------------
+# ==========================================
+# SEKME 1: HESAPLAYICI (GÖRSEL BİREBİR)
+# ==========================================
 with tab1:
-    st.markdown("### 1. Dolar Kuru")
-    col_kur1, col_kur2 = st.columns([3, 1])
-    
-    with col_kur2:
+    # 1. Güncel Döviz Kuru
+    st.markdown("##### 💱 1. Güncel Döviz Kuru")
+    col_k1, col_k2 = st.columns([3, 1])
+    with col_k1:
+        kur = st.number_input("USD / TRY Kuru:", min_value=0.0, value=st.session_state["usd_rate"], step=0.1, key="usd_input")
+    with col_k2:
         st.write("")
         st.write("")
-        if st.button("🔄 Canlı Kur Çek", use_container_width=True):
+        if st.button("🔄 Canlı Çek", use_container_width=True):
             st.session_state["usd_rate"] = get_live_usd_rate()
             st.toast(f"Güncel Kur: {st.session_state['usd_rate']} TL", icon="💱")
-
-    with col_kur1:
-        kur = st.number_input("Güncel Dolar Kuru (TL)", min_value=0.0, value=st.session_state["usd_rate"], step=0.1, key="usd_input")
-
-    col_inp1, col_inp2 = st.columns(2)
-    with col_inp1:
-        st.markdown("### 2. Ürün Maliyeti ($)")
-        cost_usd = st.number_input("Ürün Maliyeti (USD)", min_value=0.0, value=14.72, step=0.5)
-        gider_tl = cost_usd * kur
-
-    with col_inp2:
-        st.markdown("### 3. Satış Kazancı (TL)")
-        kazanc_tl = st.number_input("Elinize Geçen Tutar (TL)", min_value=0.0, value=1000.0, step=10.0)
-
-    net_kar_tl = kazanc_tl - gider_tl
+            st.rerun()
 
     st.markdown("---")
+
+    # 2. Ürün Maliyeti (USD)
+    st.markdown("##### 🏷️ 2. Ürün Maliyeti (USD)")
+    col_m1, col_m2, col_m3 = st.columns([2, 1, 1])
     
-    # Sonuç Metrik Kartları
-    res_col1, res_col2, res_col3 = st.columns(3)
-    res_col1.metric("Toplam Maliyet (TL)", f"{gider_tl:.2f} TL", delta=f"${cost_usd:.2f}", delta_color="inverse")
-    res_col2.metric("Elinize Geçen Net (TL)", f"{kazanc_tl:.2f} TL")
-    res_col3.metric("HESAPLANAN NET KAR", f"{net_kar_tl:.2f} TL", delta=f"{net_kar_tl:.2f} TL")
+    with col_m1:
+        selected_cost = st.selectbox("Fiyat Seçin ($):", options=st.session_state["cost_list"], index=0)
+    
+    with col_m2:
+        st.write("")
+        st.write("")
+        new_cost_val = st.number_input("Yeni Fiyat Ekle ($)", min_value=0.0, value=10.0, step=0.5, label_visibility="collapsed")
+        if st.button("+ Fiyat Ekle", use_container_width=True):
+            if new_cost_val not in st.session_state["cost_list"]:
+                st.session_state["cost_list"].append(round(new_cost_val, 2))
+                st.session_state["cost_list"].sort()
+                st.toast("Yeni fiyat listeye eklendi!", icon="✅")
+                st.rerun()
+
+    with col_m3:
+        st.write("")
+        st.write("")
+        if st.button("- Sil", type="secondary", use_container_width=True):
+            if len(st.session_state["cost_list"]) > 1:
+                st.session_state["cost_list"].remove(selected_cost)
+                st.toast("Seçili fiyat silindi!", icon="🗑️")
+                st.rerun()
+            else:
+                st.warning("Listede en az bir fiyat kalmalıdır!")
+
+    st.markdown("---")
+
+    # 3. Kargo Maliyeti (USD)
+    st.markdown("##### 📦 3. Kargo Maliyeti (USD)")
+    kargo_usd = st.number_input("Kargo Ücreti ($):", min_value=0.0, value=5.00, step=0.5)
+
+    st.markdown("---")
+
+    # 4. Satış Kazancı (TL)
+    st.markdown("##### 💰 4. Satış Kazancı (TL)")
+    kazanc_tl = st.number_input("Elinize Geçen (TL):", min_value=0.0, value=1000.00, step=10.0)
+
+    st.markdown("---")
+
+    # 5. Baskı Seçenekleri
+    st.markdown("##### 🌐 5. Baskı Seçenekleri")
+    arka_baski = st.checkbox("Arka kısımda baskı var (+$2.00)")
+    arka_baski_usd = 2.00 if arka_baski else 0.00
+
+    st.markdown("---")
+
+    # HESAPLAMALAR
+    urun_gider_tl = selected_cost * kur
+    kargo_gider_tl = kargo_usd * kur
+    baski_gider_tl = arka_baski_usd * kur
+    toplam_gider_tl = urun_gider_tl + kargo_gider_tl + baski_gider_tl
+    net_kar_tl = kazanc_tl - toplam_gider_tl
+
+    # HESAPLAMA ÖZETİ (GÖRSEL BİREBİR)
+    st.markdown("##### 📥 Hesaplama Özeti")
+    
+    with st.container(border=True):
+        st.write(f"**Ürün Maliyeti:** ${selected_cost:.2f} x {kur:.2f} = {urun_gider_tl:.2f} TL")
+        st.write(f"**Kargo Maliyeti:** ${kargo_usd:.2f} x {kur:.2f} = {kargo_gider_tl:.2f} TL")
+        st.write(f"**Arka Baskı:** ${arka_baski_usd:.2f} x {kur:.2f} = {baski_gider_tl:.2f} TL")
+        st.markdown("---")
+        st.markdown(f"### **Toplam Gider:** {toplam_gider_tl:.2f} TL")
+        
+        if net_kar_tl >= 0:
+            st.markdown(f"### <span style='color:#10B981;'>NET KAR: +{net_kar_tl:.2f} TL</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"### <span style='color:#EF4444;'>NET ZARAR: {net_kar_tl:.2f} TL</span>", unsafe_allow_html=True)
 
     st.write("")
-    if st.button("💾 Kaydı Veritabanına Yaz", type="primary", use_container_width=True):
+    if st.button("📥 Kayıtlara Ekle", type="primary", use_container_width=True):
         data = {
             "kur": float(kur),
-            "gider_tl": float(gider_tl),
+            "gider_tl": float(toplam_gider_tl),
             "kazanc_tl": float(kazanc_tl),
             "net_kar_tl": float(net_kar_tl)
         }
@@ -98,18 +154,16 @@ with tab1:
         except Exception as e:
             st.error(f"Veritabanına kaydetme hatası: {e}")
 
-# ------------------------------------------
+# ==========================================
 # SEKME 2: VERİTABANI KAYITLARI & FİLTRELEME
-# ------------------------------------------
+# ==========================================
 with tab2:
-    col_filter1, col_filter2 = st.columns([2, 2])
-    
-    with col_filter1:
+    col_f1, col_f2 = st.columns([2, 2])
+    with col_f1:
         selected_date = st.date_input("📅 İncelemek İstediğiniz Tarihi Seçin:", datetime.now())
     
     formatted_date_str = selected_date.strftime("%d/%m/%Y")
     
-    # Renkli Belirgin Tarih Kutusu (HTML Banner)
     st.markdown(
         f"""
         <div style="background-color: #0F172A; border-left: 6px solid #3B82F6; padding: 14px 20px; border-radius: 8px; margin-top: 10px; margin-bottom: 20px;">
@@ -126,7 +180,6 @@ with tab2:
         rows = res.data
 
         if rows:
-            # Seçilen güne göre filtreleme
             filtered_rows = []
             for r in rows:
                 raw_dt = r.get("created_at", "")
@@ -140,7 +193,6 @@ with tab2:
                         pass
 
             if filtered_rows:
-                # O Güne Ait İstatistikler
                 gunluk_toplam_kar = sum(item["net_kar_tl"] for item in filtered_rows)
                 gunluk_toplam_ciro = sum(item["kazanc_tl"] for item in filtered_rows)
                 
@@ -151,7 +203,6 @@ with tab2:
                 
                 st.markdown("---")
 
-                # Tablo Başlık Alanı
                 t_head1, t_head2, t_head3, t_head4, t_head5, t_head6 = st.columns([2.5, 1.5, 1.5, 1.5, 1.5, 1])
                 t_head1.markdown("**Tarih / Saat**")
                 t_head2.markdown("**Dolar Kuru**")
@@ -162,7 +213,6 @@ with tab2:
                 
                 st.divider()
 
-                # Tablo Satırları
                 for r in filtered_rows:
                     c1, c2, c3, c4, c5, c6 = st.columns([2.5, 1.5, 1.5, 1.5, 1.5, 1])
                     c1.write(r["formatted_time"])
@@ -176,10 +226,9 @@ with tab2:
                     else:
                         c5.markdown(f"<span style='color:#EF4444; font-weight:bold;'>{kar_val:.2f} TL</span>", unsafe_allow_html=True)
                     
-                    # Tek Tıkla Sil Butonu
                     if c6.button("🗑️ Sil", key=f"del_{r['id']}", type="secondary"):
                         supabase.table("satislar").delete().eq("id", r["id"]).execute()
-                        st.toast("Kayıt veritabanından silindi!", icon="🗑️")
+                        st.toast("Kayıt silindi!", icon="🗑️")
                         st.rerun()
 
             else:
