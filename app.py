@@ -30,7 +30,7 @@ def get_live_usd_rate():
 
     return 47.54
 
-# --- SESSION STATE BAŞLATMA ---
+# --- SESSION STATE BAŞLATMA (HAFIZA) ---
 if "usd_rate" not in st.session_state:
     st.session_state["usd_rate"] = get_live_usd_rate()
 
@@ -40,9 +40,12 @@ if "cost_list" not in st.session_state:
 if "rate_msg" not in st.session_state:
     st.session_state["rate_msg"] = None
 
-# Kutucuğu zorla yenilemek için dinamik versiyon sayacı
 if "rate_version" not in st.session_state:
     st.session_state["rate_version"] = 0
+
+# GEÇMİŞ TARİH SEÇİMİ HAFIZASI (Program kapanınca bugüne döner)
+if "sale_date" not in st.session_state:
+    st.session_state["sale_date"] = datetime.now().date()
 
 # Supabase Bağlantısı
 @st.cache_resource
@@ -62,30 +65,36 @@ st.title("🪶 Etsy Kar-Zarar Paneli")
 tab1, tab2 = st.tabs(["🧮 Kar-Zarar Hesapla", "📊 Veritabanı Kayıtları"])
 
 # ==========================================
-# SEKME 1: HESAPLAYICI
+# SEKME 1: HESAPLAYICI (TARİH SEÇİMLİ)
 # ==========================================
 with tab1:
-    # Kalıcı Bilgi Mesajı
     if st.session_state["rate_msg"]:
         st.success(st.session_state["rate_msg"])
 
-    # SATIR 1: Kur ve Canlı Çek
-    c_kur1, c_kur2 = st.columns([2, 1])
-    
+    # TARİH VE DÖVİZ KURU SATIRI
+    c_date, c_kur1, c_kur2 = st.columns([1.5, 2, 1])
+
+    with c_date:
+        # Satış Tarihi Seçimi (Oturum açık kaldığı sürece son seçilen tarihte kalır)
+        selected_sale_date = st.date_input(
+            "📅 Satış Tarihi", 
+            value=st.session_state["sale_date"]
+        )
+        st.session_state["sale_date"] = selected_sale_date
+
     with c_kur2:
         st.write("")
         st.write("")
         if st.button("🔄 Canlı Kur", use_container_width=True):
             fresh_rate = get_live_usd_rate()
             st.session_state["usd_rate"] = fresh_rate
-            st.session_state["rate_version"] += 1  # Key versiyonunu artırarak kutuyu sıfırlamaya zorluyoruz
+            st.session_state["rate_version"] += 1
             
             current_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state["rate_msg"] = f"✅ Güncel Kur Çekildi ve Kutucuğa Yazıldı: {fresh_rate} TL (Saat: {current_time})"
+            st.session_state["rate_msg"] = f"✅ Güncel Kur Çekildi: {fresh_rate} TL (Saat: {current_time})"
             st.rerun()
 
     with c_kur1:
-        # Dinamik key sayesinde her kur çekildiğinde kutucuk tamamen yeni değerle çizilir
         kur = st.number_input(
             "1. Dolar / TL Kuru", 
             min_value=0.0, 
@@ -95,7 +104,7 @@ with tab1:
         )
         st.session_state["usd_rate"] = kur
 
-    # SATIR 2: Ürün Maliyeti & Kargo Maliyeti
+    # ÜRÜN & KARGO MALİYETİ
     c_m1, c_m2 = st.columns(2)
     with c_m1:
         selected_cost = st.selectbox("2. Ürün Maliyeti ($)", options=st.session_state["cost_list"], index=0)
@@ -122,7 +131,7 @@ with tab1:
                     st.toast("Fiyat silindi!", icon="🗑️")
                     st.rerun()
 
-    # SATIR 3: Satış Kazancı & Arka Baskı
+    # SATIŞ KAZANCI & ARKA BASKI
     c_k1, c_k2 = st.columns([2, 1])
     with c_k1:
         kazanc_tl = st.number_input("4. Satış Kazancı (TL)", min_value=0.0, value=1000.00, step=10.0)
@@ -144,7 +153,7 @@ with tab1:
 
     # KOMPAKT HESAPLAMA ÖZETİ
     with st.container(border=True):
-        st.caption(f"Ürün: ${selected_cost:.2f} | Kargo: ${kargo_usd:.2f} | Arka Baskı: ${arka_baski_usd:.2f} (Kur: {kur:.2f} TL)")
+        st.caption(f"Tarih: {selected_sale_date.strftime('%d/%m/%Y')} | Ürün: ${selected_cost:.2f} | Kargo: ${kargo_usd:.2f} | Arka Baskı: ${arka_baski_usd:.2f}")
         
         res_c1, res_c2 = st.columns(2)
         res_c1.markdown(f"**Toplam Gider:**  \n**{toplam_gider_tl:.2f} TL**")
@@ -156,7 +165,11 @@ with tab1:
 
     st.write("")
     if st.button("📥 Kayıtlara Ekle", type="primary", use_container_width=True):
+        # Seçilen tarihi ISO formatına getirip Supabase'e gönderiyoruz
+        created_timestamp = f"{selected_sale_date.strftime('%Y-%m-%d')}T12:00:00+00:00"
+        
         data = {
+            "created_at": created_timestamp,
             "kur": float(kur),
             "gider_tl": float(toplam_gider_tl),
             "kazanc_tl": float(kazanc_tl),
@@ -165,7 +178,7 @@ with tab1:
         try:
             res = supabase.table("satislar").insert(data).execute()
             if res.data:
-                st.toast("Satış başarıyla eklendi!", icon="✅")
+                st.toast(f"Satış {selected_sale_date.strftime('%d/%m/%Y')} tarihine kaydedildi!", icon="✅")
                 st.session_state["rate_msg"] = None
                 st.rerun()
         except Exception as e:
