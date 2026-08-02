@@ -43,7 +43,6 @@ if "rate_msg" not in st.session_state:
 if "rate_version" not in st.session_state:
     st.session_state["rate_version"] = 0
 
-# GEÇMİŞ TARİH SEÇİMİ HAFIZASI (Program kapanınca bugüne döner)
 if "sale_date" not in st.session_state:
     st.session_state["sale_date"] = datetime.now().date()
 
@@ -65,7 +64,7 @@ st.title("🪶 Etsy Kar-Zarar Paneli")
 tab1, tab2 = st.tabs(["🧮 Kar-Zarar Hesapla", "📊 Veritabanı Kayıtları"])
 
 # ==========================================
-# SEKME 1: HESAPLAYICI (TARİH SEÇİMLİ)
+# SEKME 1: HESAPLAYICI (SAATSİZ & SADE)
 # ==========================================
 with tab1:
     if st.session_state["rate_msg"]:
@@ -75,7 +74,6 @@ with tab1:
     c_date, c_kur1, c_kur2 = st.columns([1.5, 2, 1])
 
     with c_date:
-        # Satış Tarihi Seçimi (Oturum açık kaldığı sürece son seçilen tarihte kalır)
         selected_sale_date = st.date_input(
             "📅 Satış Tarihi", 
             value=st.session_state["sale_date"]
@@ -90,8 +88,8 @@ with tab1:
             st.session_state["usd_rate"] = fresh_rate
             st.session_state["rate_version"] += 1
             
-            current_time = datetime.now().strftime("%H:%M:%S")
-            st.session_state["rate_msg"] = f"✅ Güncel Kur Çekildi: {fresh_rate} TL (Saat: {current_time})"
+            today_str = datetime.now().strftime("%d/%m/%Y")
+            st.session_state["rate_msg"] = f"✅ Güncel Dolar Kuru Çekildi ve Kutucuğa Yazıldı: {fresh_rate} TL (Tarih: {today_str})"
             st.rerun()
 
     with c_kur1:
@@ -165,8 +163,8 @@ with tab1:
 
     st.write("")
     if st.button("📥 Kayıtlara Ekle", type="primary", use_container_width=True):
-        # Seçilen tarihi ISO formatına getirip Supabase'e gönderiyoruz
-        created_timestamp = f"{selected_sale_date.strftime('%Y-%m-%d')}T12:00:00+00:00"
+        # Sadece Gün/Ay/Yıl bilgisini veritabanına kaydediyoruz
+        created_timestamp = f"{selected_sale_date.strftime('%Y-%m-%d')}T00:00:00+00:00"
         
         data = {
             "created_at": created_timestamp,
@@ -178,14 +176,14 @@ with tab1:
         try:
             res = supabase.table("satislar").insert(data).execute()
             if res.data:
-                st.toast(f"Satış {selected_sale_date.strftime('%d/%m/%Y')} tarihine kaydedildi!", icon="✅")
+                st.toast(f"Satış {selected_sale_date.strftime('%d/%m/%Y')} tarihine eklendi!", icon="✅")
                 st.session_state["rate_msg"] = None
                 st.rerun()
         except Exception as e:
             st.error(f"Veritabanına kaydetme hatası: {e}")
 
 # ==========================================
-# SEKME 2: VERİTABANI KAYITLARI & FİLTRELEME
+# SEKME 2: VERİTABANI KAYITLARI (SAATSİZ)
 # ==========================================
 with tab2:
     selected_date = st.date_input("📅 İncelemek İstediğiniz Tarih:", datetime.now())
@@ -214,7 +212,6 @@ with tab2:
                     try:
                         dt_obj = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
                         if dt_obj.date() == selected_date:
-                            r["formatted_time"] = dt_obj.strftime("%H:%M")
                             filtered_rows.append(r)
                     except Exception:
                         pass
@@ -230,13 +227,14 @@ with tab2:
                 
                 st.markdown("---")
 
-                for r in filtered_rows:
+                # Saatsiz, temiz kart listesi
+                for idx, r in enumerate(filtered_rows, 1):
                     with st.container(border=True):
                         c1, c2 = st.columns([3, 1])
                         with c1:
                             kar_val = r['net_kar_tl']
                             kar_html = f"<span style='color:#10B981; font-weight:bold;'>+{kar_val:.2f} TL</span>" if kar_val >= 0 else f"<span style='color:#EF4444; font-weight:bold;'>{kar_val:.2f} TL</span>"
-                            st.markdown(f"**Saat {r['formatted_time']}** | Kar: {kar_html}", unsafe_allow_html=True)
+                            st.markdown(f"**Satış #{idx}** | Net Kar: {kar_html}", unsafe_allow_html=True)
                             st.caption(f"Kazanç: {r['kazanc_tl']:.2f} TL | Gider: {r['gider_tl']:.2f} TL | Kur: {r['kur']:.2f} TL")
                         with c2:
                             if st.button("🗑️", key=f"del_{r['id']}", type="secondary", use_container_width=True):
